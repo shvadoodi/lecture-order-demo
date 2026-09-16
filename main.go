@@ -27,7 +27,19 @@ func main() {
 			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
 		}
 	})
-	mux.HandleFunc("/orders/", method(http.MethodGet, handler.GetOrderByID))
+	mux.HandleFunc("/orders/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handler.GetOrderByID(w, r)
+		case http.MethodPut:
+			handler.UpdateOrder(w, r)
+		case http.MethodDelete:
+			handler.DeleteOrder(w, r)
+		default:
+			w.Header().Set("Allow", "GET, PUT, DELETE")
+			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		}
+	})
 
 	server := &http.Server{
 		Addr:              ":8080",
