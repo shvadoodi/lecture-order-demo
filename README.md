@@ -2,7 +2,7 @@
 
 A small Go REST API for the lecture **From Classroom Code to Production Software**.
 
-The project intentionally starts with an **in-memory repository** so students can see the architecture without needing Docker, PostgreSQL, Kafka, or cloud credentials.
+The project intentionally uses an **in-memory repository** so students can see the architecture without needing Docker, PostgreSQL, Kafka, or cloud credentials.
 
 ## Architecture
 
@@ -15,14 +15,14 @@ Service
     ↓
 Repository → in-memory map (RAM)
     ↓
-Order stored
+Order stored / updated / deleted
 
 Service
     ↓
 EventPublisher → log output (Kafka stand-in)
 ```
 
-The interfaces make it possible to later replace the in-memory repository with PostgreSQL and the log publisher with Kafka/SNS/SQS/EventBridge.
+The interfaces make it possible to later replace the in-memory repository with PostgreSQL and the log publisher with Kafka, SNS, SQS, or EventBridge.
 
 ## Requirements
 
@@ -34,7 +34,11 @@ The interfaces make it possible to later replace the in-memory repository with P
 go run .
 ```
 
-The API starts at `http://localhost:8080`.
+The API starts at:
+
+```text
+http://localhost:8080
+```
 
 ## Test
 
@@ -44,47 +48,30 @@ go test ./...
 
 ## Endpoints
 
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Health check |
+| POST | `/orders` | Create an order |
+| GET | `/orders` | Get all orders |
+| GET | `/orders/{id}` | Get one order |
+| PUT | `/orders/{id}` | Replace/edit an order |
+| DELETE | `/orders/{id}` | Delete an order |
+
+## PowerShell examples
+
+These examples are recommended when running the lecture demo on Windows PowerShell.
+
 ### Health
 
-```bash
-curl http://localhost:8080/health
-```
-
-Expected response:
-
-```json
-{"status":"UP"}
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8080/health" -Method Get
 ```
 
 ### Create an order
 
-```bash
-curl -X POST http://localhost:8080/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customerId": "CUS-1001",
-    "items": [
-      {
-        "productId": "P-100",
-        "name": "Mechanical Keyboard",
-        "quantity": 1,
-        "price": 129.99
-      },
-      {
-        "productId": "P-200",
-        "name": "Wireless Mouse",
-        "quantity": 2,
-        "price": 39.99
-      }
-    ]
-  }'
-```
-
-Example response:
-
-```json
+```powershell
+$body = @'
 {
-  "id": "ORD-000001",
   "customerId": "CUS-1001",
   "items": [
     {
@@ -99,14 +86,18 @@ Example response:
       "quantity": 2,
       "price": 39.99
     }
-  ],
-  "total": 209.97,
-  "status": "CREATED",
-  "createdAt": "2026-09-16T17:00:00Z"
+  ]
 }
+'@
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/orders" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-The server also logs an event similar to:
+The server logs an event similar to:
 
 ```text
 EVENT OrderCreated orderID=ORD-000001 customerID=CUS-1001 total=209.97
@@ -114,14 +105,90 @@ EVENT OrderCreated orderID=ORD-000001 customerID=CUS-1001 total=209.97
 
 ### Get all orders
 
-```bash
-curl http://localhost:8080/orders
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8080/orders" -Method Get
 ```
 
 ### Get one order
 
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8080/orders/ORD-000001" -Method Get
+```
+
+### Edit an order
+
+`PUT` replaces the editable order data: `customerId` and the complete `items` array. The order ID and `createdAt` remain unchanged, while `updatedAt` is added.
+
+```powershell
+$body = @'
+{
+  "customerId": "CUS-2002",
+  "items": [
+    {
+      "productId": "P-300",
+      "name": "27-inch Monitor",
+      "quantity": 2,
+      "price": 249.99
+    }
+  ]
+}
+'@
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/orders/ORD-000001" `
+  -Method Put `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+The total is recalculated by the service rather than accepted from the client.
+
+The server logs:
+
+```text
+EVENT OrderUpdated orderID=ORD-000001 customerID=CUS-2002 total=499.98
+```
+
+### Delete an order
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://localhost:8080/orders/ORD-000001" `
+  -Method Delete
+```
+
+A successful delete returns HTTP **204 No Content**.
+
+The server logs:
+
+```text
+EVENT OrderDeleted orderID=ORD-000001
+```
+
+If you try to get the same order afterward, the API returns HTTP **404 Not Found**.
+
+## curl examples for Bash / WSL
+
+### Create
+
 ```bash
-curl http://localhost:8080/orders/ORD-000001
+curl -X POST http://localhost:8080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"CUS-1001","items":[{"productId":"P-100","name":"Mechanical Keyboard","quantity":1,"price":129.99}]}'
+```
+
+### Edit
+
+```bash
+curl -X PUT http://localhost:8080/orders/ORD-000001 \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"CUS-2002","items":[{"productId":"P-300","name":"Monitor","quantity":2,"price":249.99}]}'
+```
+
+### Delete
+
+```bash
+curl -X DELETE http://localhost:8080/orders/ORD-000001
 ```
 
 ## Where is the data stored?
@@ -151,12 +218,44 @@ Distributed services
 Cloud deployment
 ```
 
+## CRUD flow
+
+```text
+POST /orders
+    ↓
+CreateOrder
+    ↓
+repository.Create
+    ↓
+OrderCreated event
+
+PUT /orders/{id}
+    ↓
+UpdateOrder
+    ↓
+validate + recalculate total
+    ↓
+repository.Update
+    ↓
+OrderUpdated event
+
+DELETE /orders/{id}
+    ↓
+DeleteOrder
+    ↓
+repository.Delete
+    ↓
+OrderDeleted event
+```
+
 ## Teaching points
 
-This project is designed to demonstrate:
+This project demonstrates:
 
 - HTTP and REST
+- CRUD operations
 - JSON request/response handling
+- HTTP status codes such as `200`, `201`, `204`, `400`, `404`, and `405`
 - validation
 - separation of concerns
 - handler/service/repository layers
