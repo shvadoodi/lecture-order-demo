@@ -22,9 +22,15 @@ type Order struct {
 	Total      float64     `json:"total"`
 	Status     OrderStatus `json:"status"`
 	CreatedAt  time.Time   `json:"createdAt"`
+	UpdatedAt  *time.Time  `json:"updatedAt,omitempty"`
 }
 
 type CreateOrderRequest struct {
+	CustomerID string      `json:"customerId"`
+	Items      []OrderItem `json:"items"`
+}
+
+type UpdateOrderRequest struct {
 	CustomerID string      `json:"customerId"`
 	Items      []OrderItem `json:"items"`
 }
