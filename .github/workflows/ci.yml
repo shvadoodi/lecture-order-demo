@@ -1,0 +1,28 @@
+name: Go CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./cmd/api
+      - name: Test with race detection
+        run: go test -race -timeout 60s -coverprofile=coverage.out ./...
+      - name: Regenerate mocks and Swagger
+        run: |
+          go generate ./...
+          go run tools/generate.go swag init -g main.go -d cmd/api,internal/adapter/httpapi,internal/order -o docs --parseInternal --outputTypes json
+          git diff --exit-code -- internal docs/swagger.json

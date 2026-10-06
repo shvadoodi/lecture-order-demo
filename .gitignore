@@ -6,3 +6,10 @@ lecture-order-demo
 .vscode/
 .idea/
 .DS_Store
+
+# Local build cache
+.tmp/
+
+# Development outputs
+/api
+/coverage.out

@@ -1,0 +1,72 @@
+package httpapi
+
+import (
+	"log"
+	"net/http"
+
+	_ "github.com/shvadoodi/lecture-order-demo/docs"
+	httpSwagger "github.com/swaggo/http-swagger"
+)
+
+// NewRouter registers the API endpoints and request logging.
+func NewRouter(handler *OrderHandler) http.Handler {
+	mux := http.NewServeMux()
+
+	// Swagger UI endpoint
+	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
+	mux.HandleFunc("/health", method(http.MethodGet, health))
+	mux.HandleFunc("/orders", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			handler.CreateOrder(w, r)
+		case http.MethodGet:
+			handler.GetOrders(w, r)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		}
+	})
+	mux.HandleFunc("/orders/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handler.GetOrderByID(w, r)
+		case http.MethodPut:
+			handler.UpdateOrder(w, r)
+		case http.MethodDelete:
+			handler.DeleteOrder(w, r)
+		default:
+			w.Header().Set("Allow", "GET, PUT, DELETE")
+			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+		}
+	})
+
+	return loggingMiddleware(mux)
+}
+
+// health reports API availability.
+// @Summary Health check
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /health [get]
+func health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "UP"})
+}
+
+func method(allowed string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != allowed {
+			w.Header().Set("Allow", allowed)
+			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
