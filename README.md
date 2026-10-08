@@ -35,7 +35,8 @@ lecture-order-demo/
 ├── cmd/api/main.go                  executable entry point and shutdown signals
 ├── docs/
 │   ├── docs.go                      embeds and registers the Swagger specification
-│   └── swagger.json                 generated API specification
+│   ├── swagger.json                 generated API specification
+│   └── lecture-guide.md             slide-to-code map and prepared classroom demo
 ├── internal/
 │   ├── adapter/
 │   │   ├── eventlog/
@@ -55,6 +56,7 @@ lecture-order-demo/
 │   ├── app/
 │   │   ├── app.go                   dependency wiring and server lifecycle
 │   │   ├── app_test.go
+│   │   ├── order_flow_test.go        component tests for publishing failures and retries
 │   │   └── server_moq_test.go       generated server mock
 │   ├── config/
 │   │   ├── config.go                .env loading and environment validation
@@ -201,6 +203,8 @@ go test -race ./...
 
 Use the coverage commands above to inspect current statement coverage. Coverage scope excludes the process entry point and generated Swagger registration; the application wiring and lifecycle are tested in `internal/app`. Statement coverage does not prove correctness for every possible input.
 
+Component tests in `internal/app/order_flow_test.go` exercise HTTP, the real service, and memory storage. They demonstrate a stored order after publishing fails and separate orders after repeated POST requests. These tests do not connect to a real database or broker.
+
 CI runs vet, build, tests with race detection, and mock/Swagger regeneration checks on Linux.
 
 ## Endpoints
@@ -240,6 +244,23 @@ Order endpoint errors use a JSON body such as:
 ```json
 {"error": "customerId is required"}
 ```
+
+## Logging and troubleshooting
+
+The HTTP middleware logs each request's method and path. HTTP adapters log rejected JSON bodies, invalid order paths, and unsupported methods. The order service logs failures for create, list, get, update, and delete, including the operation, failure stage, reason, and order ID when available.
+
+Successful event methods log `EVENT OrderCreated`, `EVENT OrderUpdated`, or `EVENT OrderDeleted`. When cancellation prevents publishing, the event adapter logs `EVENT_FAILED` with the event name, order ID, and cancellation error. Service publishing failures include `saved=true` or `deleted=true` because the storage change has already happened.
+
+Example messages (timestamps omitted):
+
+```text
+create order failed: stage=validation error=customerId is required
+get order failed: stage=storage orderID=ORD-000001 error=order not found
+EVENT_FAILED OrderUpdated orderID=ORD-000001 error=context canceled
+update order failed: stage=publishing orderID=ORD-000001 saved=true error=context canceled
+```
+
+Failures still return errors to the caller. HTTP clients receive validation or not-found responses where appropriate and a generic `internal server error` for infrastructure failures. Full request bodies are not logged. The service owns business-failure logs, and a shared HTTP helper maps errors to responses without logging them again. The application injects its logger into both the service and event publisher, while HTTP boundary logs use the standard logger. Event cancellation produces an adapter failure entry and a service entry explaining the stored-data outcome. A larger system should add request correlation IDs.
 
 ## PowerShell examples
 
@@ -436,6 +457,8 @@ OrderDeleted event
 
 ## Reading the code in class
 
+Use the [lecture companion](docs/lecture-guide.md) for a slide-to-code map, a prepared demo, and student exercises based on the one-hour PowerPoint. It distinguishes implemented practices from production extensions.
+
 Start with `cmd/api/main.go` and `internal/app/app.go` to see startup and the explicit dependency wiring. Then follow one create request through the HTTP handler, order service, memory repository, and event log publisher. Read the adjacent tests to see success, validation, cancellation, and dependency failures.
 
 Source comments explain why interfaces, request contexts, mutexes, defensive copies, bounded JSON input, and graceful shutdown are used. Constructors receive dependencies, and early returns keep failure paths visible. The configuration parser is a small literal `.env` reader; it is not a full shell parser.
@@ -462,6 +485,8 @@ This project demonstrates:
 - how a small application evolves toward production architecture
 
 ## Production discussion
+
+This demo has no authentication, payment processing, asynchronous consumers, or idempotency keys. Repeating `POST /orders` creates another order, and `/health` checks process availability only.
 
 Persistence and event publishing are separate operations. If publishing fails after a write, the API returns `500` even though the order was already created, updated, or deleted. A transactional outbox would address this gap when adding durable storage and messaging.
 

@@ -43,6 +43,7 @@ func decodeJSONBody(r *http.Request, dst any) error {
 func orderIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/orders/"))
 	if id == "" || strings.Contains(id, "/") {
+		log.Printf("order request rejected: method=%s path=%q stage=path error=a single order id is required", r.Method, r.URL.Path)
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "a single order id is required"})
 		return "", false
 	}
@@ -61,11 +62,16 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 // writeOrderError keeps infrastructure errors out of client responses.
 func writeOrderError(w http.ResponseWriter, err error) {
+	// errors.Is recognizes not-found errors even when wrapped with context.
+	if errors.Is(err, domain.ErrOrderNotFound) {
+		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "order not found"})
+		return
+	}
 	var validationError *domain.ValidationError
 	if errors.As(err, &validationError) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
-	log.Printf("order operation error: %v", err)
+	// The service logs business failures. HTTP only maps them to public responses.
 	writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal server error"})
 }

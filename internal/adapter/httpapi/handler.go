@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"log"
 	"net/http"
 
@@ -49,6 +48,7 @@ func NewOrderHandler(service OrderService) *OrderHandler {
 func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var request domain.CreateOrderRequest
 	if err := decodeJSONBody(r, &request); err != nil {
+		log.Printf("order request rejected: method=%s path=%q stage=decoding error=%v", r.Method, r.URL.Path, err)
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -71,8 +71,7 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 func (h *OrderHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.service.GetOrders(r.Context())
 	if err != nil {
-		log.Printf("get orders error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal server error"})
+		writeOrderError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, orders)
@@ -94,13 +93,8 @@ func (h *OrderHandler) GetOrderByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	order, err := h.service.GetOrder(r.Context(), id)
-	if errors.Is(err, domain.ErrOrderNotFound) {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "order not found"})
-		return
-	}
 	if err != nil {
-		log.Printf("get order error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal server error"})
+		writeOrderError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, order)
@@ -125,14 +119,11 @@ func (h *OrderHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	var request domain.UpdateOrderRequest
 	if err := decodeJSONBody(r, &request); err != nil {
+		log.Printf("order request rejected: method=%s path=%q stage=decoding error=%v", r.Method, r.URL.Path, err)
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
 	order, err := h.service.UpdateOrder(r.Context(), id, request)
-	if errors.Is(err, domain.ErrOrderNotFound) {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "order not found"})
-		return
-	}
 	if err != nil {
 		writeOrderError(w, err)
 		return
@@ -156,13 +147,8 @@ func (h *OrderHandler) DeleteOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.service.DeleteOrder(r.Context(), id)
-	if errors.Is(err, domain.ErrOrderNotFound) {
-		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "order not found"})
-		return
-	}
 	if err != nil {
-		log.Printf("delete order error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal server error"})
+		writeOrderError(w, err)
 		return
 	}
 	// A successful delete has no response body.

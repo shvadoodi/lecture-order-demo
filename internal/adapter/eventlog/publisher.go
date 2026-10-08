@@ -21,6 +21,7 @@ func NewLogEventPublisher(logger *log.Logger) *LogEventPublisher {
 // PublishOrderCreated logs the order after it has been stored.
 func (p *LogEventPublisher) PublishOrderCreated(ctx context.Context, order domain.Order) error {
 	if err := ctx.Err(); err != nil {
+		p.logger.Printf("EVENT_FAILED OrderCreated orderID=%s error=%v", order.ID, err)
 		return err
 	}
 	p.logger.Printf("EVENT OrderCreated orderID=%s customerID=%s total=%.2f", order.ID, order.CustomerID, order.Total)
@@ -30,6 +31,7 @@ func (p *LogEventPublisher) PublishOrderCreated(ctx context.Context, order domai
 // PublishOrderUpdated logs the current data after a successful update.
 func (p *LogEventPublisher) PublishOrderUpdated(ctx context.Context, order domain.Order) error {
 	if err := ctx.Err(); err != nil {
+		p.logger.Printf("EVENT_FAILED OrderUpdated orderID=%s error=%v", order.ID, err)
 		return err
 	}
 	p.logger.Printf("EVENT OrderUpdated orderID=%s customerID=%s total=%.2f", order.ID, order.CustomerID, order.Total)
@@ -39,6 +41,7 @@ func (p *LogEventPublisher) PublishOrderUpdated(ctx context.Context, order domai
 // PublishOrderDeleted needs only the ID because the order has been removed.
 func (p *LogEventPublisher) PublishOrderDeleted(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
+		p.logger.Printf("EVENT_FAILED OrderDeleted orderID=%s error=%v", id, err)
 		return err
 	}
 	p.logger.Printf("EVENT OrderDeleted orderID=%s", id)

@@ -39,8 +39,11 @@ func TestPublisher(t *testing.T) {
 			if err := tc.publish(publisher, ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("error=%v", err)
 			}
-			if output.Len() != 0 {
-				t.Fatal("canceled operation published event")
+			if !strings.Contains(output.String(), "EVENT_FAILED") || !strings.Contains(output.String(), "orderID=ORD-1 error=context canceled") {
+				t.Fatalf("missing event failure details: %q", output.String())
+			}
+			if strings.Contains(output.String(), "EVENT ") {
+				t.Fatal("canceled operation published a success event")
 			}
 		})
 	}

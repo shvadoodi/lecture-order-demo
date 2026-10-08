@@ -20,7 +20,7 @@ func NewServer(cfg config.Config, logger *log.Logger) *http.Server {
 	// Build from the inside out: storage and events, business logic, then HTTP.
 	repository := memory.NewInMemoryOrderRepository()
 	publisher := eventlog.NewLogEventPublisher(logger)
-	service := order.NewOrderService(repository, publisher)
+	service := order.NewOrderServiceWithLogger(repository, publisher, logger)
 	handler := httpapi.NewOrderHandler(service)
 
 	return &http.Server{

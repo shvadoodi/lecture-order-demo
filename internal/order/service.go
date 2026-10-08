@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync/atomic"
@@ -21,19 +22,36 @@ type OrderService struct {
 	repository OrderRepository
 	publisher  EventPublisher
 	counter    uint64
+	logger     *log.Logger
 	// A clock function makes timestamp assertions deterministic in tests.
 	now func() time.Time
 }
 
 // NewOrderService receives dependencies rather than constructing adapters.
 func NewOrderService(repository OrderRepository, publisher EventPublisher) *OrderService {
-	return &OrderService{repository: repository, publisher: publisher, now: time.Now}
+	return NewOrderServiceWithLogger(repository, publisher, log.Default())
+}
+
+// NewOrderServiceWithLogger lets the application choose the log destination.
+// Tests can capture logs without changing global process settings.
+func NewOrderServiceWithLogger(repository OrderRepository, publisher EventPublisher, logger *log.Logger) *OrderService {
+	if logger == nil {
+		logger = log.Default()
+	}
+	return &OrderService{
+		repository: repository,
+		publisher:  publisher,
+		logger:     logger,
+		now:        time.Now,
+	}
 }
 
 // CreateOrder validates input, saves the order, then publishes its creation.
 func (s *OrderService) CreateOrder(ctx context.Context, request CreateOrderRequest) (Order, error) {
 	customerID, items, total, err := validateOrderInput(request.CustomerID, request.Items)
 	if err != nil {
+		// Log the reason without logging the full customer request.
+		s.logger.Printf("create order failed: stage=validation error=%v", err)
 		return Order{}, err
 	}
 
@@ -50,11 +68,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, request CreateOrderReque
 	}
 
 	if err := s.repository.Create(ctx, order); err != nil {
+		s.logger.Printf("create order failed: stage=storage orderID=%s error=%v", order.ID, err)
 		return Order{}, fmt.Errorf("save order: %w", err)
 	}
 	// Storage and publishing are separate operations: a publishing error does
 	// not undo the write. A durable system can address this with an outbox.
 	if err := s.publisher.PublishOrderCreated(ctx, order); err != nil {
+		s.logger.Printf("create order failed: stage=publishing orderID=%s saved=true error=%v", order.ID, err)
 		return Order{}, fmt.Errorf("publish order-created event: %w", err)
 	}
 	return order, nil
@@ -62,23 +82,33 @@ func (s *OrderService) CreateOrder(ctx context.Context, request CreateOrderReque
 
 // GetOrder retrieves one order without involving HTTP details.
 func (s *OrderService) GetOrder(ctx context.Context, id string) (Order, error) {
-	return s.repository.GetByID(ctx, id)
+	order, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Printf("get order failed: stage=storage orderID=%s error=%v", id, err)
+	}
+	return order, err
 }
 
 // GetOrders retrieves all stored orders.
 func (s *OrderService) GetOrders(ctx context.Context) ([]Order, error) {
-	return s.repository.GetAll(ctx)
+	orders, err := s.repository.GetAll(ctx)
+	if err != nil {
+		s.logger.Printf("list orders failed: stage=storage error=%v", err)
+	}
+	return orders, err
 }
 
 // UpdateOrder replaces editable data while preserving identity and creation time.
 func (s *OrderService) UpdateOrder(ctx context.Context, id string, request UpdateOrderRequest) (Order, error) {
 	existing, err := s.repository.GetByID(ctx, id)
 	if err != nil {
+		s.logger.Printf("update order failed: stage=lookup orderID=%s error=%v", id, err)
 		return Order{}, err
 	}
 
 	customerID, items, total, err := validateOrderInput(request.CustomerID, request.Items)
 	if err != nil {
+		s.logger.Printf("update order failed: stage=validation orderID=%s error=%v", id, err)
 		return Order{}, err
 	}
 
@@ -89,9 +119,11 @@ func (s *OrderService) UpdateOrder(ctx context.Context, id string, request Updat
 	existing.UpdatedAt = &now
 
 	if err := s.repository.Update(ctx, existing); err != nil {
+		s.logger.Printf("update order failed: stage=storage orderID=%s error=%v", id, err)
 		return Order{}, fmt.Errorf("update order: %w", err)
 	}
 	if err := s.publisher.PublishOrderUpdated(ctx, existing); err != nil {
+		s.logger.Printf("update order failed: stage=publishing orderID=%s saved=true error=%v", id, err)
 		return Order{}, fmt.Errorf("publish order-updated event: %w", err)
 	}
 	return existing, nil
@@ -100,12 +132,15 @@ func (s *OrderService) UpdateOrder(ctx context.Context, id string, request Updat
 // DeleteOrder checks existence, removes the order, then publishes its deletion.
 func (s *OrderService) DeleteOrder(ctx context.Context, id string) error {
 	if _, err := s.repository.GetByID(ctx, id); err != nil {
+		s.logger.Printf("delete order failed: stage=lookup orderID=%s error=%v", id, err)
 		return err
 	}
 	if err := s.repository.Delete(ctx, id); err != nil {
+		s.logger.Printf("delete order failed: stage=storage orderID=%s error=%v", id, err)
 		return fmt.Errorf("delete order: %w", err)
 	}
 	if err := s.publisher.PublishOrderDeleted(ctx, id); err != nil {
+		s.logger.Printf("delete order failed: stage=publishing orderID=%s deleted=true error=%v", id, err)
 		return fmt.Errorf("publish order-deleted event: %w", err)
 	}
 	return nil

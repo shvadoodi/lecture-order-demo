@@ -1,10 +1,13 @@
 package order
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -331,5 +334,133 @@ func TestConcurrentCreatesHaveUniqueIDs(t *testing.T) {
 	}
 	if len(seen) != cap(ids) {
 		t.Fatalf("created %d orders", len(seen))
+	}
+}
+
+// Verify each creation failure is observable even when the service is called directly.
+func TestCreateOrderFailureLogs(t *testing.T) {
+	var output bytes.Buffer
+	logger := log.New(&output, "", 0)
+	failure := errors.New("dependency unavailable")
+	for _, stage := range []string{"validation", "storage", "publishing"} {
+		t.Run(stage, func(t *testing.T) {
+			output.Reset()
+			repo := &OrderRepositoryMock{CreateFunc: func(context.Context, Order) error {
+				if stage == "storage" {
+					return failure
+				}
+				return nil
+			}}
+			pub := &EventPublisherMock{PublishOrderCreatedFunc: func(context.Context, Order) error {
+				if stage == "publishing" {
+					return failure
+				}
+				return nil
+			}}
+			request := validRequest()
+			wantErr := failure
+			if stage == "validation" {
+				request.CustomerID = ""
+				wantErr = ErrInvalidCustomer
+			}
+			_, err := NewOrderServiceWithLogger(repo, pub, logger).CreateOrder(context.Background(), request)
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("error=%v want=%v", err, wantErr)
+			}
+			message := output.String()
+			if !strings.Contains(message, "stage="+stage) || !strings.Contains(message, wantErr.Error()) {
+				t.Fatalf("missing failure details: %s", message)
+			}
+			if stage == "publishing" && !strings.Contains(message, "saved=true") {
+				t.Fatalf("log must explain that the order was already saved: %s", message)
+			}
+		})
+	}
+	output.Reset()
+	repo := &OrderRepositoryMock{CreateFunc: func(context.Context, Order) error { return nil }}
+	pub := &EventPublisherMock{PublishOrderCreatedFunc: func(context.Context, Order) error { return nil }}
+	if _, err := NewOrderServiceWithLogger(repo, pub, logger).CreateOrder(context.Background(), validRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("successful creation logged a failure: %s", output.String())
+	}
+}
+
+func TestOtherOperationFailureLogs(t *testing.T) {
+	var output bytes.Buffer
+	logger := log.New(&output, "", 0)
+	failure := errors.New("dependency unavailable")
+	for _, tc := range []struct{ operation, stage string }{
+		{"get", "storage"}, {"list", "storage"},
+		{"update", "lookup"}, {"update", "validation"}, {"update", "storage"}, {"update", "publishing"},
+		{"delete", "lookup"}, {"delete", "storage"}, {"delete", "publishing"},
+	} {
+		t.Run(tc.operation+"/"+tc.stage, func(t *testing.T) {
+			output.Reset()
+			repo := &OrderRepositoryMock{
+				GetByIDFunc: func(context.Context, string) (Order, error) {
+					if tc.operation == "get" || tc.stage == "lookup" {
+						return Order{}, failure
+					}
+					return Order{ID: "ORD-1"}, nil
+				},
+				GetAllFunc: func(context.Context) ([]Order, error) { return nil, failure },
+				UpdateFunc: func(context.Context, Order) error {
+					if tc.stage == "storage" {
+						return failure
+					}
+					return nil
+				},
+				DeleteFunc: func(context.Context, string) error {
+					if tc.stage == "storage" {
+						return failure
+					}
+					return nil
+				},
+			}
+			pub := &EventPublisherMock{
+				PublishOrderUpdatedFunc: func(context.Context, Order) error { return failure },
+				PublishOrderDeletedFunc: func(context.Context, string) error { return failure },
+			}
+			service := NewOrderServiceWithLogger(repo, pub, logger)
+			ctx := context.Background()
+			var err error
+			want := failure
+			switch tc.operation {
+			case "get":
+				_, err = service.GetOrder(ctx, "ORD-1")
+			case "list":
+				_, err = service.GetOrders(ctx)
+			case "update":
+				request := validRequest()
+				if tc.stage == "validation" {
+					request.CustomerID = ""
+					want = ErrInvalidCustomer
+				}
+				_, err = service.UpdateOrder(ctx, "ORD-1", UpdateOrderRequest{CustomerID: request.CustomerID, Items: request.Items})
+			case "delete":
+				err = service.DeleteOrder(ctx, "ORD-1")
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("error=%v want=%v", err, want)
+			}
+			message := output.String()
+			if !strings.Contains(message, tc.operation+" order") || !strings.Contains(message, "stage="+tc.stage) || !strings.Contains(message, want.Error()) {
+				t.Fatalf("missing failure details: %s", message)
+			}
+			if tc.operation != "list" && !strings.Contains(message, "orderID=ORD-1") {
+				t.Fatalf("missing ID: %s", message)
+			}
+			if tc.stage == "publishing" {
+				state := "saved=true"
+				if tc.operation == "delete" {
+					state = "deleted=true"
+				}
+				if !strings.Contains(message, state) {
+					t.Fatalf("missing storage outcome: %s", message)
+				}
+			}
+		})
 	}
 }

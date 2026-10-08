@@ -24,6 +24,7 @@ func NewRouter(handler *OrderHandler) http.Handler {
 		case http.MethodGet:
 			handler.GetOrders(w, r)
 		default:
+			log.Printf("request rejected: method=%s path=%q error=method not allowed", r.Method, r.URL.Path)
 			w.Header().Set("Allow", "GET, POST")
 			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
 		}
@@ -37,6 +38,7 @@ func NewRouter(handler *OrderHandler) http.Handler {
 		case http.MethodDelete:
 			handler.DeleteOrder(w, r)
 		default:
+			log.Printf("request rejected: method=%s path=%q error=method not allowed", r.Method, r.URL.Path)
 			w.Header().Set("Allow", "GET, PUT, DELETE")
 			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
 		}
@@ -59,6 +61,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 func method(allowed string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != allowed {
+			log.Printf("request rejected: method=%s path=%q error=method not allowed", r.Method, r.URL.Path)
 			w.Header().Set("Allow", allowed)
 			writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
 			return
