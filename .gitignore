@@ -14,3 +14,6 @@ lecture-order-demo
 /api
 /coverage.out
 /vendor/
+
+# Local environment configuration
+/.env

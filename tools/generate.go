@@ -15,7 +15,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: go run tools/generate.go moq|swag [arguments]")
 		os.Exit(1)
 	}
-	versions := map[string]string{"moq": "github.com/matryer/moq@v0.4.0", "swag": "github.com/swaggo/swag/cmd/swag@v1.16.6"}
+	// Pin versions so students and CI generate identical files.
+	versions := map[string]string{
+		"moq":  "github.com/matryer/moq@v0.4.0",
+		"swag": "github.com/swaggo/swag/cmd/swag@v1.16.6",
+	}
 	version, ok := versions[os.Args[1]]
 	if !ok {
 		fmt.Fprintln(os.Stderr, "unknown generator:", os.Args[1])
@@ -28,6 +32,7 @@ func main() {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
+	// Generators can require a newer toolchain than the application itself.
 	cmd.Env = append(cmd.Env, "GOTOOLCHAIN=go1.23.12")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {

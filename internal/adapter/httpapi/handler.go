@@ -11,6 +11,8 @@ import (
 
 //go:generate go run ../../../tools/generate.go moq -out service_moq_test.go . OrderService
 
+// OrderService describes what HTTP handlers need from the business layer.
+// Defining it here keeps handlers independent of the concrete service.
 type OrderService interface {
 	CreateOrder(ctx context.Context, request domain.CreateOrderRequest) (domain.Order, error)
 	GetOrders(ctx context.Context) ([]domain.Order, error)
@@ -19,15 +21,20 @@ type OrderService interface {
 	DeleteOrder(ctx context.Context, id string) error
 }
 
+// ErrorResponse is the public JSON shape for API failures.
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// OrderHandler translates HTTP input and output; business rules stay in order.
 type OrderHandler struct {
 	service OrderService
 }
 
-func NewOrderHandler(service OrderService) *OrderHandler { return &OrderHandler{service: service} }
+// NewOrderHandler injects the service used for every order request.
+func NewOrderHandler(service OrderService) *OrderHandler {
+	return &OrderHandler{service: service}
+}
 
 // CreateOrder handles POST /orders.
 // @Summary Create an order
@@ -45,6 +52,7 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
+	// Forward request cancellation to storage and event publishing.
 	order, err := h.service.CreateOrder(r.Context(), request)
 	if err != nil {
 		writeOrderError(w, err)
@@ -147,13 +155,16 @@ func (h *OrderHandler) DeleteOrder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteOrder(r.Context(), id); errors.Is(err, domain.ErrOrderNotFound) {
+	err := h.service.DeleteOrder(r.Context(), id)
+	if errors.Is(err, domain.ErrOrderNotFound) {
 		writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "order not found"})
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		log.Printf("delete order error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal server error"})
 		return
 	}
+	// A successful delete has no response body.
 	w.WriteHeader(http.StatusNoContent)
 }

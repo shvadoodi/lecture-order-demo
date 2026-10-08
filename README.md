@@ -28,36 +28,52 @@ The interfaces make it possible to later replace the in-memory repository with P
 
 ```text
 lecture-order-demo/
-├── cmd/api/main.go                  entry point, configuration, and shutdown signals
-├── internal/
-│   ├── app/
-│   │   └── app.go                   adapter wiring and graceful server lifecycle
-│   ├── config/
-│   │   └── config.go                environment configuration and validation
-│   ├── order/
-│   │   ├── model.go                 order models and create/update request types
-│   │   ├── ports.go                 repository and event publisher interfaces
-│   │   └── service.go               validation, totals, IDs, and CRUD use cases
-│   └── adapter/
-│       ├── httpapi/
-│       │   ├── handler.go           HTTP handlers and service interface
-│       │   ├── helpers.go           JSON decoding, responses, and error handling
-│       │   └── router.go            routes, health check, logging, and Swagger UI
-│       ├── memory/repository.go     concurrency-safe in-memory storage
-│       └── eventlog/publisher.go    order events written to the log
+├── .env                             local settings (ignored by Git)
+├── .env.example                     tracked configuration template
+├── .github/workflows/ci.yml          vet, build, race tests, and generation checks
+├── .gitignore
+├── cmd/api/main.go                  executable entry point and shutdown signals
 ├── docs/
 │   ├── docs.go                      embeds and registers the Swagger specification
 │   └── swagger.json                 generated API specification
+├── internal/
+│   ├── adapter/
+│   │   ├── eventlog/
+│   │   │   ├── publisher.go         log-based order event publisher
+│   │   │   └── publisher_test.go
+│   │   ├── httpapi/
+│   │   │   ├── handler.go           HTTP handlers and service interface
+│   │   │   ├── handler_test.go
+│   │   │   ├── helpers.go           JSON decoding, responses, and error handling
+│   │   │   ├── helpers_test.go
+│   │   │   ├── router.go            routes, health, logging, and Swagger UI
+│   │   │   ├── service_moq_test.go  generated service mock
+│   │   │   └── swagger_test.go
+│   │   └── memory/
+│   │       ├── repository.go        concurrency-safe in-memory storage
+│   │       └── repository_test.go
+│   ├── app/
+│   │   ├── app.go                   dependency wiring and server lifecycle
+│   │   ├── app_test.go
+│   │   └── server_moq_test.go       generated server mock
+│   ├── config/
+│   │   ├── config.go                .env loading and environment validation
+│   │   └── config_test.go
+│   └── order/
+│       ├── model.go                 order and request types
+│       ├── ports.go                 repository and event publisher interfaces
+│       ├── ports_moq_test.go        generated repository and publisher mocks
+│       ├── service.go               validation, totals, IDs, and CRUD use cases
+│       └── service_test.go
 ├── tools/generate.go                pinned mock and Swagger generator runner
-├── vendor/                          vendored Go dependencies
-├── .github/workflows/ci.yml          vet, build, race tests, and generation checks
-├── .gitignore                       ignores binaries, caches, and coverage output
-├── go.mod                           module path, Go version, and dependencies
+├── go.mod                           module, Go version, and dependencies
 ├── go.sum                           dependency checksums
-└── README.md                        setup, architecture, and API examples
+└── README.md
 ```
 
-Tests live beside the code they exercise in `*_test.go` files. The tree above omits those files for readability. Files ending in `_moq_test.go` are generated mocks for the order ports, HTTP service interface, and application server interface; they are used only by tests. Local build outputs belong in the ignored `.tmp/` directory.
+Tests live beside the code they exercise in `*_test.go` files. Files ending in `_moq_test.go` are generated mocks used only by tests.
+
+The local workspace also contains `vendor/` for vendored dependencies and `.tmp/` for build outputs and caches. Both are ignored by Git and omitted from the tree above.
 
 ### Package boundaries
 
@@ -76,7 +92,7 @@ The `internal/order` package owns the business logic and dependency interfaces w
 ## Requirements
 
 - Go 1.22+ to build, run, and test the app.
-- Runtime dependencies are included in `vendor/`; standard build and test commands use them automatically.
+- Go downloads module dependencies as needed. If a local `vendor/` directory is present, standard build and test commands use it automatically. You can recreate it with `go mod vendor`.
 - Generation downloads a pinned Go 1.23.12 toolchain and pinned generators on first use; network access is required for that first download. No separate `moq` or `swag` installation is needed.
 - Race detection requires cgo and a C compiler.
 
@@ -103,6 +119,24 @@ go build -o .tmp/order-api ./cmd/api
 ```
 
 ### Configuration
+
+The app reads `.env` from the current working directory when it starts, through [internal/config/config.go](internal/config/config.go). The local `.env` is ignored by Git; [.env.example](.env.example) provides the tracked template. After cloning, create your local file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` to configure the server, then run the app from the repository root. For example:
+
+```dotenv
+HTTP_ADDR=:8080
+HTTP_READ_HEADER_TIMEOUT=5s
+HTTP_SHUTDOWN_TIMEOUT=10s
+```
+
+Restart the app after changes.
+
+Configuration precedence is process environment, then `.env`, then the defaults below. A missing `.env` is allowed. The file supports `KEY=value`, optional `export ` prefixes, quoted values, blank lines, and full-line `#` comments. Values are literal; shell expansion and inline comments are unsupported.
 
 | Environment variable | Default | Purpose |
 |---|---|---|
@@ -165,7 +199,7 @@ go tool cover -html=coverage.out
 go test -race ./...
 ```
 
-The unit suite covers 100% of statements in each `internal` package. Coverage scope excludes the process entry point and generated Swagger registration; the application wiring and lifecycle are tested in `internal/app`. Statement coverage does not prove correctness for every possible input.
+Use the coverage commands above to inspect current statement coverage. Coverage scope excludes the process entry point and generated Swagger registration; the application wiring and lifecycle are tested in `internal/app`. Statement coverage does not prove correctness for every possible input.
 
 CI runs vet, build, tests with race detection, and mock/Swagger regeneration checks on Linux.
 
@@ -399,6 +433,14 @@ repository.Delete
     ↓
 OrderDeleted event
 ```
+
+## Reading the code in class
+
+Start with `cmd/api/main.go` and `internal/app/app.go` to see startup and the explicit dependency wiring. Then follow one create request through the HTTP handler, order service, memory repository, and event log publisher. Read the adjacent tests to see success, validation, cancellation, and dependency failures.
+
+Source comments explain why interfaces, request contexts, mutexes, defensive copies, bounded JSON input, and graceful shutdown are used. Constructors receive dependencies, and early returns keep failure paths visible. The configuration parser is a small literal `.env` reader; it is not a full shell parser.
+
+This is a teaching application with production practices, while persistence, reliable messaging, and other deployment requirements remain discussion topics below.
 
 ## Teaching points
 

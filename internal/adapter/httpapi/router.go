@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	// The blank import runs docs.init to register the embedded Swagger document.
 	_ "github.com/shvadoodi/lecture-order-demo/docs"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
@@ -15,6 +16,7 @@ func NewRouter(handler *OrderHandler) http.Handler {
 	// Swagger UI endpoint
 	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
 	mux.HandleFunc("/health", method(http.MethodGet, health))
+	// Collection routes and single-order routes accept different HTTP methods.
 	mux.HandleFunc("/orders", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
@@ -53,6 +55,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "UP"})
 }
 
+// method rejects unsupported methods and advertises the accepted one.
 func method(allowed string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != allowed {
@@ -64,6 +67,7 @@ func method(allowed string, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// loggingMiddleware wraps the router so every request is logged in one place.
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s", r.Method, r.URL.Path)
