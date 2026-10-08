@@ -13,3 +13,4 @@ lecture-order-demo
 # Development outputs
 /api
 /coverage.out
+/vendor/

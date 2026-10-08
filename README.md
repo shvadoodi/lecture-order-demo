@@ -24,30 +24,59 @@ EventPublisher → log output (Kafka stand-in)
 
 The interfaces make it possible to later replace the in-memory repository with PostgreSQL and the log publisher with Kafka, SNS, SQS, or EventBridge.
 
-## Code layout
+## Project structure
 
 ```text
-cmd/api/                    executable entry point and OS signal handling
-internal/
-  app/                      dependency wiring and graceful server lifecycle
-  config/                   environment configuration and validation
-  order/                    models, validation, use cases, and dependency interfaces
-  adapter/
-    httpapi/                HTTP handlers, routes, JSON helpers, and Swagger UI
-    memory/                 concurrency-safe in-memory repository
-    eventlog/               log-based event publisher
-docs/                       embedded Swagger specification
-tools/generate.go           pinned mock and Swagger generator runner
-.github/workflows/ci.yml     build, vet, unit tests, race detection, generation checks
+lecture-order-demo/
+├── cmd/api/main.go                  entry point, configuration, and shutdown signals
+├── internal/
+│   ├── app/
+│   │   └── app.go                   adapter wiring and graceful server lifecycle
+│   ├── config/
+│   │   └── config.go                environment configuration and validation
+│   ├── order/
+│   │   ├── model.go                 order models and create/update request types
+│   │   ├── ports.go                 repository and event publisher interfaces
+│   │   └── service.go               validation, totals, IDs, and CRUD use cases
+│   └── adapter/
+│       ├── httpapi/
+│       │   ├── handler.go           HTTP handlers and service interface
+│       │   ├── helpers.go           JSON decoding, responses, and error handling
+│       │   └── router.go            routes, health check, logging, and Swagger UI
+│       ├── memory/repository.go     concurrency-safe in-memory storage
+│       └── eventlog/publisher.go    order events written to the log
+├── docs/
+│   ├── docs.go                      embeds and registers the Swagger specification
+│   └── swagger.json                 generated API specification
+├── tools/generate.go                pinned mock and Swagger generator runner
+├── vendor/                          vendored Go dependencies
+├── .github/workflows/ci.yml          vet, build, race tests, and generation checks
+├── .gitignore                       ignores binaries, caches, and coverage output
+├── go.mod                           module path, Go version, and dependencies
+├── go.sum                           dependency checksums
+└── README.md                        setup, architecture, and API examples
 ```
 
-The `order` package has no HTTP or storage implementation dependencies. Adapters implement its repository and publisher interfaces. HTTP handlers consume an `OrderService` interface. `internal/app` assembles the concrete implementations, while `cmd/api` loads configuration and handles shutdown signals.
+Tests live beside the code they exercise in `*_test.go` files. The tree above omits those files for readability. Files ending in `_moq_test.go` are generated mocks for the order ports, HTTP service interface, and application server interface; they are used only by tests. Local build outputs belong in the ignored `.tmp/` directory.
 
-Tests live beside the code they exercise. Files ending in `_moq_test.go` are generated mocks, used only by tests.
+### Package boundaries
+
+The `internal/order` package owns the business logic and dependency interfaces without depending on HTTP or storage implementations. The memory and event log adapters implement its `OrderRepository` and `EventPublisher` interfaces. HTTP handlers consume an `OrderService` interface declared in `internal/adapter/httpapi`.
+
+`internal/app` connects the adapters and service, constructs the HTTP server, and manages its lifecycle. `cmd/api` loads configuration and handles operating-system shutdown signals. Go's `internal/` directory keeps these packages private to this module's parent tree.
+
+### Suggested reading order
+
+1. [Order models](internal/order/model.go) and [ports](internal/order/ports.go) define the data and dependencies.
+2. [Order service](internal/order/service.go) implements validation and CRUD behavior.
+3. [Memory repository](internal/adapter/memory/repository.go) and [event publisher](internal/adapter/eventlog/publisher.go) implement the ports.
+4. [HTTP handlers](internal/adapter/httpapi/handler.go), [helpers](internal/adapter/httpapi/helpers.go), and [router](internal/adapter/httpapi/router.go) expose the API.
+5. [Application wiring](internal/app/app.go), [configuration](internal/config/config.go), and [entry point](cmd/api/main.go) show how the server starts and stops.
 
 ## Requirements
 
 - Go 1.22+ to build, run, and test the app.
+- Runtime dependencies are included in `vendor/`; standard build and test commands use them automatically.
 - Generation downloads a pinned Go 1.23.12 toolchain and pinned generators on first use; network access is required for that first download. No separate `moq` or `swag` installation is needed.
 - Race detection requires cgo and a C compiler.
 
@@ -62,6 +91,10 @@ The API starts at:
 ```text
 http://localhost:8080
 ```
+
+Swagger UI: [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html).
+
+If you change `HTTP_ADDR`, use the same host and port for the Swagger URL.
 
 Run commands from the repository root. To build a binary:
 
@@ -91,7 +124,7 @@ Ctrl+C or SIGTERM initiates graceful shutdown. If the grace period expires, the 
 
 ## Swagger UI
 
-Open http://localhost:8080/swagger/index.html to browse and try the API.
+Open [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) to browse and try the API.
 The Swagger JSON is served at `/swagger/doc.json`. Generated docs are included in `docs/`, so `go run ./cmd/api` works without installing the generator.
 
 After changing API annotations in `cmd/api/main.go` or `internal/adapter/httpapi/`, or request/response models in `internal/order/`, regenerate the specification:
@@ -310,12 +343,12 @@ curl -X DELETE http://localhost:8080/orders/ORD-000001
 
 ## Where is the data stored?
 
-Orders are stored in this in-memory map:
+Orders are stored in the map in [internal/adapter/memory/repository.go](internal/adapter/memory/repository.go):
 
 ```go
 type InMemoryOrderRepository struct {
     mu     sync.RWMutex
-    orders map[string]Order
+    orders map[string]domain.Order
 }
 ```
 
