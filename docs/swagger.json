@@ -293,6 +293,7 @@
                     "type": "number"
                 },
                 "updatedAt": {
+                    "description": "A nil pointer means the order has never been updated and omits the JSON field.",
                     "type": "string"
                 }
             }
